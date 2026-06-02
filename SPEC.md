@@ -1,79 +1,84 @@
-# Service Specification: Firmware Management Service (FMS)
+The Just-In-Time (JIT) approach is a highly efficient, stateless design. It removes the inventory management overhead and turns your service into a pure orchestration engine.
 
-## 1. System Overview
-**Objective:** A unified service that acts as a local firmware library and orchestrates out-of-band Redfish firmware updates for hardware nodes.
-**Primary Domain:** Hardware Lifecycle / Firmware Management.
-**Boundaries:** This service tracks available firmware files, serves those files over HTTP, and triggers Redfish update commands. It does NOT automatically reboot nodes, track complex cross-component dependencies, or perform in-band OS-level script updates.
+I strongly recommend starting from scratch with a unified, single-phase plan rather than having an agent modify the existing code.
 
-## 2. Infrastructure & Scaffold Configuration
-This service relies on the Fabrica framework.
+Here is why a clean slate is the better operational path:
+
+1. **Clean Schema Management:** Removing the `FirmwareBundle` resource from an existing Fabrica/Ent project requires downward database migrations and deleting generated ORM code. AI agents often struggle to cleanly rip out scaffolded files, frequently leaving orphaned imports or lingering Ent schema references that cause compiler panics.
+2. **Simplified State Machine:** The new architecture combines the ORAS manifest pull and the Redfish dispatch into a single reconciliation loop. It is much easier and less error-prone for an agent to write this combined logic from a blank state than to untangle the previous two-resource dependency.
+
+Here is the complete, consolidated task document you can hand to an agent to build the JIT version from scratch.
+
+---
+
+# Autonomous Agent Directive: JIT Firmware Execution Service
+
+## 1. System Overview & Architecture
+
+**Objective:** A stateless execution engine that dynamically pulls OCI firmware payloads on demand and proxies them to hardware BMCs via Redfish.
+**Architecture:** This service does NOT track inventory. It exposes a single Custom Resource (`FirmwareUpdateJob`). Upon creation, the service dynamically resolves the OCI reference via ORAS, streams the payload via a custom HTTP proxy route, and orchestrates the Redfish update.
+
+**Fabrica Configuration (MANDATORY):**
+You must use the Fabrica framework to scaffold this service.
+
 * **Project Name:** firmware-manager
 * **API Group:** hardware.fabrica.dev
 * **Storage Type:** ent
 * **Database Driver:** sqlite
-* **Required Features:** --reconcile, --events, --storage
+* **Required Features:** --reconcile, --events
 
-## 3. Resource Requirements (Agent-Designed Schema)
+## 2. Resource Schema: FirmwareUpdateJob
 
-### Resource: FirmwareImage
-* **Description:** Represents a firmware binary that exists in a local directory accessible to this service.
-* **Data to Capture (Spec):** * `Filename` (The exact name of the binary file on disk).
-  * `Version` (Semantic version string).
-  * `TargetComponent` (e.g., BIOS, BMC).
-  * `Models` (Array of strings representing supported hardware models).
-* **State to Track (Status):** A boolean indicating if the file was successfully found and verified on the local disk, and a string for any errors.
+Use `fabrica add resource FirmwareUpdateJob` to generate this resource.
 
-### Resource: FirmwareUpdateJob
-* **Description:** Represents a request to update a specific node using a specific FirmwareImage.
-* **Data to Capture (Spec):**
-  * `TargetAddress` (Hostname or IP of the BMC).
-  * `Username` and `Password` (Credentials for the BMC).
-  * `ImageName` (Reference to the `metadata.name` of a `FirmwareImage` resource).
-  * `Targets` (Array of strings representing the Redfish OData URIs to update, e.g., ["/redfish/v1/UpdateService/FirmwareInventory/BMC"]).
-  * `ServerAddress` (The actual network IP or hostname of this Fabrica server, so the BMC knows where to download the file from. DO NOT use localhost).
-* **State to Track (Status):** Job status string, the Redfish Task ID (if returned), start/end timestamps, and exact failure reasons.
+**Required Input (Spec):**
 
-## 4. Custom Business Logic & Reconciliation
+* `TargetAddress` (string, required): Hostname or IP of the BMC.
+* `Username` (string, required): BMC authentication username.
+* `Password` (string, required): BMC authentication password.
+* `OCIReference` (string, required): The full OCI registry target (e.g., "registry.example.org/firmware/bmc:1.0.0").
+* `Targets` (array of strings, required): Redfish OData URIs to update.
+* `ServerProxyAddress` (string, required): Network IP or hostname of this Fabrica server used for the proxy endpoint.
 
-**Requirement 1: HTTP File Server (The "Library")**
-* In `cmd/server/openapi_extensions.go` or a custom routing file, register a standard Go `http.FileServer` mounted at `/firmware-files/` that serves files from a local `./firmware_payloads` directory. Ensure the directory is created if it does not exist.
+**Required State (Status):**
 
-**Requirement 2: FirmwareImage Validation**
-* **Trigger:** Creation or Update of a `FirmwareImage`.
-* **Action:** Check if `Filename` exists in the `./firmware_payloads` directory.
-* **State Update:** Set the Status to verified/unverified based on file existence.
+* `JobState` (string): Current state ("Pending", "Resolving", "InProgress", "Failed", "Completed").
+* `TaskID` (string, optional): Redfish Task URI for tracking.
+* `ErrorDetail` (string, optional): Exact error message if execution fails.
 
-**Requirement 3: FirmwareUpdateJob Execution**
-* **Trigger:** Creation or Update of a `FirmwareUpdateJob`.
-* **Action:** 1. Retrieve the corresponding `FirmwareImage` resource using the provided `ImageName` to get the `Filename`.
-  2. Construct the Image URI using the `ServerAddress` provided in the Spec. The URI MUST look like: `http://[ServerAddress]:8090/firmware-files/[Filename]`.
-  3. Execute an HTTP POST to the target BMC: `https://[TargetAddress]/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate`.
-  4. The JSON payload must ONLY include the `ImageURI` and the `Targets` array provided in the Spec. Example: `{"ImageURI": "<Constructed_URI>", "Targets": ["<Target1>"]}`. Do not include TransferProtocol.
-  5. Use basic auth with the provided credentials and disable TLS verification (`InsecureSkipVerify: true`).
-* **State Update:** * If Redfish accepts the job (200 OK or 202 Accepted), update Status to `InProgress` and record the Redfish Task URI if provided.
-  * If it fails, record the exact error and set Status to `Failed`.
+## 3. Global Execution Requirements
 
-## 5. Agent Operational Directives (Strict Rules of Engagement)
-You are an autonomous software engineering agent. You must achieve the target state defined in Sections 1-4 by executing terminal commands, writing code, and resolving your own errors.
+* **Module Dependencies:** Add the required module: `go get oras.land/oras-go/v2`.
+* **Proxy Implementation:** In `cmd/server/openapi_extensions.go`, implement a standard Go HTTP route at `/firmware-proxy/layer/{digest}`. This route must parse the requested digest, use the ORAS client (with `PlainHTTP=true` fallback for localhost) to fetch the layer from the OCI registry, and stream the bytes to the HTTP response writer.
 
-**Workflow Loop & Savepoints:**
-1. **Analyze & Design:** Read the business logic required in Section 4. Determine the exact Go struct fields required for the Spec and Status of the resources listed in Section 3.
-2. **Scaffold:** Execute the `fabrica init` command with the parameters defined in Section 2. 
-    * *Git Action:* `git add . && git commit -m "chore: scaffold project"`
-3. **Define & Generate:** Use `fabrica add resource` for each item in Section 3. Modify the generated `*_types.go` files to implement the schema you designed. Run `fabrica generate`.
-    * *Git Action:* `git add . && git commit -m "feat: define resources and generate artifacts"`
-4. **Implement:** Write the custom logic defined in Section 4 in the appropriate Fabrica reconciler stubs and routing files.
-5. **Verify (Compiler):** You must run `go mod tidy` and `go build ./...` after modifying any Go files. If the compiler outputs errors, you must read the error, modify the code, and re-compile autonomously.
-6. **Test (Unit):** Write table-driven tests for the custom reconciliation logic. Run `go test ./...`. Ensure tests pass.
-    * *Git Action:* `git add . && git commit -m "feat: implement and test reconciliation logic"`
-7. **Verify (Integration):** You must verify the server successfully binds to the port and routes HTTP requests.
-    * Create a dummy file in `./firmware_payloads`.
-    * Start the server locally in the background using `go run ./cmd/server serve --database-url="file:data.db?cache=shared&_fk=1"`.
-    * Execute a `curl` GET request to verify the file server works (e.g., `curl http://localhost:8090/firmware-files/dummy.bin`).
-    * Execute a `curl` POST request to create a `FirmwareImage` resource.
-    * If the response is a 404, 400, or 500, analyze the server logs, correct the payload or endpoint path, and re-test until you receive a successful 2xx HTTP status code.
-    * Terminate the background server process.
-8. **Handoff (CRITICAL):** Create a `HANDOFF.md` file in the root directory. This file must contain:
-    * A brief summary of the business logic implemented.
-    * The exact schema fields decided upon for the Spec and Status.
-    * The exact, verified `curl` commands that succeeded in Step 7 for both file retrieval and resource creation.
+## 4. Reconciliation State Machine
+
+Place this logic in `pkg/reconcilers/firmwareupdatejob_reconciler.go`.
+
+* **Idempotency Check:** Halt execution if `JobState` is `InProgress`, `Completed`, or `Failed`.
+* **Step 1: OCI Resolution (The JIT Pull):** Update state to `Resolving`. Parse the `OCIReference` to extract the registry, repository, and tag/digest. Initialize an ORAS client, pull the manifest, verify the artifact type is `application/vnd.openchami.firmware.bundle.v1+json`, and extract the digest of the first layer (the payload).
+* **Step 2: Redfish Dispatch:** Construct the proxy URI: `http://[ServerProxyAddress]:8090/firmware-proxy/layer/[PayloadDigest]`. Execute an HTTP POST to `https://[TargetAddress]/redfish/v1/UpdateService/Actions/UpdateService.SimpleUpdate` using insecure TLS. The JSON payload must include the `ImageURI` and the `Targets` array.
+* **Error Handling:** Treat HTTP 4xx errors (from ORAS or BMC) as terminal, updating state to `Failed` with the error detail. Treat network timeouts/503s as transient, utilizing an exponential backoff retry. On success, update state to `InProgress`.
+
+## 5. End-to-End Validation (CRITICAL)
+
+You must stage a local OCI registry, push a dummy payload, and physically verify the JIT orchestration loop before handoff.
+
+1. **Stage Registry & Payload:**
+`docker run -d -p 5000:5000 --name local-oci-registry registry:2`
+`echo "dummy payload" > dummy.bin`
+`oras push localhost:5000/firmware/test-bmc:1.0.0 --artifact-type application/vnd.openchami.firmware.bundle.v1+json dummy.bin:application/vnd.openchami.firmware.payload.v1`
+2. **Start Server:**
+`go run ./cmd/server serve --database-url="file:data.db?cache=shared&_fk=1"`
+3. **Trigger JIT Execution:**
+Execute a POST to create a `FirmwareUpdateJob` using `localhost:5000/firmware/test-bmc:1.0.0` as the `OCIReference`, and a dummy BMC IP for the `TargetAddress`.
+4. **Verify State:**
+Execute a GET on the created job. Ensure the job transitions from `Pending` -> `Resolving` -> `Failed` (it will ultimately fail because the dummy BMC IP is unreachable, but the error MUST be a Redfish connection timeout, proving the ORAS payload digest was successfully resolved).
+
+## 6. Output Artifacts
+
+Generate a `HANDOFF.md` containing:
+
+1. A brief summary of the implemented reconciliation logic.
+3. The exact, verified `curl` command that successfully created the resource.
+4. Detailed notes on important details for using the service, whereby someone with no context could fully utilize the service and it’s endpoints as expected and fully understand the implementation.
