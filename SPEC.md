@@ -1,16 +1,3 @@
-The Just-In-Time (JIT) approach is a highly efficient, stateless design. It removes the inventory management overhead and turns your service into a pure orchestration engine.
-
-I strongly recommend starting from scratch with a unified, single-phase plan rather than having an agent modify the existing code.
-
-Here is why a clean slate is the better operational path:
-
-1. **Clean Schema Management:** Removing the `FirmwareBundle` resource from an existing Fabrica/Ent project requires downward database migrations and deleting generated ORM code. AI agents often struggle to cleanly rip out scaffolded files, frequently leaving orphaned imports or lingering Ent schema references that cause compiler panics.
-2. **Simplified State Machine:** The new architecture combines the ORAS manifest pull and the Redfish dispatch into a single reconciliation loop. It is much easier and less error-prone for an agent to write this combined logic from a blank state than to untangle the previous two-resource dependency.
-
-Here is the complete, consolidated task document you can hand to an agent to build the JIT version from scratch.
-
----
-
 # Autonomous Agent Directive: JIT Firmware Execution Service
 
 ## 1. System Overview & Architecture
