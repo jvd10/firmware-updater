@@ -52,7 +52,7 @@ Based on the execution steps, update the HTTP response explicitly in `cmd/server
 
 ## 5. Output Artifacts
 
-Generate a `CHASSIS_HANDOFF.md` containing:
+Generate a `planning/CHASSIS_HANDOFF.md` containing:
 
 1. A brief summary of the implemented logic.
 3. The exact, verified `curl` command that successfully executes your code.
