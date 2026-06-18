@@ -29,7 +29,12 @@ For Discovery Mode to function, the service must trust the metadata in the OCI r
 ### Push Command
 
 ```bash
-oras push 127.0.0.1:5000/firmware/cray-bmc:1.10.2 --plain-http --artifact-type application/vnd.openchami.firmware.bundle.v1+json --annotation "dev.fabrica.hardware.compatible=x9000" --annotation "org.opencontainers.image.version=1.10.2" NC-1.10.2-22-s.tar.gz:application/vnd.openchami.firmware.payload.v1
+oras push 127.0.0.1:5000/firmware/cray-bmc:1.10.2 \
+  --plain-http \
+  --artifact-type application/vnd.openchami.firmware.bundle.v1+json \
+  --annotation "dev.fabrica.hardware.compatible=x9000" \
+  --annotation "org.opencontainers.image.version=1.10.2" \
+  NC-1.10.2-22-s.tar.gz:application/vnd.openchami.firmware.payload.v1
 
 ```
 
@@ -52,7 +57,25 @@ To initiate an update, the user submits a `FirmwareUpdateJob` resource. In Disco
 ### Submit Job Command
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8090/firmwareupdatejobs/ -H 'Content-Type: application/json' -d '{"metadata": {"name": "live-cray-discovery-bmc"}, "spec": {"targetAddress": "x9000c3s7b1", "username": "root", "password": "initial0", "serverProxyAddress": "10.254.1.20", "component": "BMC", "discovery": {"repository": "127.0.0.1:5000/firmware/cray-bmc", "hardwareModel": "x9000", "version": "latest"}}}'
+curl -sS -X POST http://127.0.0.1:8090/firmwareupdatejobs/ \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "metadata": {
+      "name": "live-cray-discovery-bmc"
+    },
+    "spec": {
+      "targetAddress": "x9000c3s7b1",
+      "username": "root",
+      "password": "initial0",
+      "serverProxyAddress": "10.254.1.20",
+      "component": "BMC",
+      "discovery": {
+        "repository": "127.0.0.1:5000/firmware/cray-bmc",
+        "hardwareModel": "x9000",
+        "version": "latest"
+      }
+    }
+  }'
 
 ```
 
