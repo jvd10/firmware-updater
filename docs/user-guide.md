@@ -65,8 +65,7 @@ oras push quay.io/my-org/firmware/cray-bmc:1.10.2 \
   --artifact-type application/vnd.openchami.firmware.bundle.v1+json \
   --annotation "dev.fabrica.hardware.compatible=x9000" \
   --annotation "org.opencontainers.image.version=1.10.2" \
-  my-firmware.bin:application/vnd.openchami.firmware.payload.v1
-
+  NC-1.10.2-22-s.tar.gz:application/vnd.openchami.firmware.payload.v1
 ```
 
 ### Explicit Mode
